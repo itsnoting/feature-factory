@@ -1,0 +1,25 @@
+{
+  "id": "kmp-android-ios",
+  "displayName": "Kotlin Multiplatform (Android + iOS, Compose)",
+  "detect": "settings.gradle(.kts) at repo root OR in android/, AND (iosApp/ dir OR a *.xcodeproj)",
+  "gates": {
+    "fast": "./gradlew :app:assembleDebug testDebugUnitTest jvmTest",
+    "snapshot": "./gradlew verifyRoborazziDebug -x :app:testDebugUnitTest",
+    "e2e": "./gradlew :app:connectedDebugAndroidTest"
+  },
+  "gatesComment": "EMPIRICAL (2026-07-01): Roborazzi here is record-by-default and wired into the unit-test tasks, so ANY of test/testDebugUnitTest/jvmTest RE-RECORDS snapshot baselines as a side effect (verify-mode -P flags did not override it). Do NOT try to pick a test command that avoids snapshot writes — there isn't one. The real false-'done' defense is the workflow's Audit phase (verifies the specific planned test executed) + the scope-guard (flags baseline churn) + human baseline review, NOT the gate command. Some baselines (e.g. feature/squadlist SquadListScreenSnapshotTest.squadList_*) render nondeterministically across machines and will show as modified on any test run — treat as environmental noise unless a source change explains them.",
+  "gateNotes": {
+    "snapshot": "If a NEW component has no baseline, run `./gradlew recordRoborazziDebug`, then report status 'pass' with detail noting baselines were recorded and need human eyeball review. If an EXISTING baseline regressed, that is a 'fail'.",
+    "e2e": "First run `adb devices`; if a device/emulator is attached, run the e2e gate. If none is attached, report status 'skipped' with detail 'no emulator running'."
+  },
+  "conventions": "Kotlin Multiplatform (Android + iOS) app with Compose Multiplatform UI. Shared logic in commonMain; platform code in androidMain/iosMain. Modules: app/, core/*, feature/*, build-logic/ (convention plugins). Follow the existing DI, app-shell, and navigation patterns already in the codebase — read neighboring files before adding anything. testTag strings live in a shared TestTags file in commonMain; iOS mirrors them by hand in the iosApp UI tests. Match surrounding naming, comment density, and idiom. No new dependencies without strong justification.",
+  "reviewDimensions": [
+    { "key": "correctness", "ask": "Logic bugs, edge cases, null/empty/error handling, state that fails to reset between operations." },
+    { "key": "kmp-conventions", "ask": "commonMain/platform split is correct, DI wiring matches the codebase, module boundaries respected, no dead code, no needless new dependencies." },
+    { "key": "compose-ui", "ask": "Uses the project's design-system components, correct testTags for anything user-facing, snapshot-worthy states are covered by Roborazzi." }
+  ],
+  "procedures": {
+    "snapshot": "Roborazzi tasks are the `Debug`-suffixed variants (verifyRoborazziDebug / recordRoborazziDebug). New composables need a baseline recorded first.",
+    "ios": "This factory only runs the Android gates. Build the iOS framework and run the iOS UI tests separately (xcodebuild) before any release."
+  }
+}

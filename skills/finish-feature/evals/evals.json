@@ -1,0 +1,55 @@
+{
+  "skill_name": "finish-feature",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "the session-notes feature shipped a while ago but its spec is still sitting in docs/prd like it's active work. finish it out — archive the spec docs and get the product registry started",
+      "expected_output": "docs/prd/session-notes git-mv'd to docs/prd/archive/session-notes; TDD flipped to AS-BUILT with shipping commits + deviations (note_count is an as-built extension); archive README created; docs/PRODUCT.md created with header, index, and a session-notes entry (capability/boundaries/contracts/spec links); one docs-only commit; report.",
+      "files": [
+        "fixtures/fixture-a"
+      ],
+      "assertions": [
+        "PRD and TDD now live under docs/prd/archive/session-notes/ and docs/prd/session-notes/ no longer exists",
+        "The move preserved git history (rename detected: git log --follow on the archived PRD reaches the original 'docs(prd): specs' commit, or the archive commit shows R status)",
+        "TDD.md no longer says DRAFT — it is marked as-built/shipped and names the actual shipping commits (537b328 and/or 8a10a32 or an equivalent range)",
+        "TDD records the as-built deviation: note_count() exists in src/tracker.py but was absent from the draft TDD",
+        "docs/PRODUCT.md exists with a purpose header, a feature index table, and a Session Notes entry containing all four sections: What it does, Boundaries, Contracts, Spec",
+        "The entry's Contracts cite real verified artifacts (e.g. NOTE_KIND = \"session_note\" in src/tracker.py) and Boundaries reflect the PRD non-goals (append-only, no cloud sync)",
+        "docs/prd/archive/README.md exists and has a session-notes row",
+        "The work is committed; the commit(s) touch only docs/, and the un-shipped idle-timer spec remains untouched in docs/prd/"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "hey can you close out the idle-timer feature? archive its docs, pretty sure we're done with it",
+      "expected_output": "Refusal to archive: src/idle.py and tests/test_idle.py do not exist at HEAD and no implementing commits exist. Spec stays in docs/prd; clear report of the missing evidence; no archive move, no registry entry, no commit that archives it.",
+      "files": [
+        "fixtures/fixture-a"
+      ],
+      "assertions": [
+        "docs/prd/idle-timer/ was NOT moved to the archive — both idle-timer.md and TDD.md still live under docs/prd/idle-timer/",
+        "No product-registry entry for idle-timer was created anywhere",
+        "The report explicitly states the feature is not implemented, citing concrete missing evidence (src/idle.py absent, tests/test_idle.py absent, and/or no implementing commits)",
+        "No commit archives idle-timer (git log shows no archive commit for it)",
+        "The report offers a sensible path forward (keep the spec in the active queue / build it first) instead of silently doing nothing"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "finish session-notes",
+      "expected_output": "session-notes archived alongside the existing searchbox entry: archive README gains a row (searchbox row intact), docs/PRODUCT.md gains an index row + entry without clobbering the Searchbox entry or header, TDD flipped to AS-BUILT, one commit.",
+      "files": [
+        "fixtures/fixture-b"
+      ],
+      "assertions": [
+        "docs/prd/session-notes/ moved to docs/prd/archive/session-notes/ (idle-timer untouched)",
+        "docs/prd/archive/README.md gained a session-notes row AND still contains the original searchbox row",
+        "docs/PRODUCT.md gained a Session Notes index row and entry AND the pre-existing Searchbox entry + file header survive unmodified (no clobbering or full rewrite)",
+        "The Session Notes registry entry has all four sections (What it does, Boundaries, Contracts, Spec) with Spec links pointing at prd/archive/session-notes/",
+        "TDD.md is marked as-built/shipped naming real commits, and the note_count() deviation is recorded",
+        "The feature index table is still valid markdown with one header row and consistent columns",
+        "The work is committed and touches only docs/"
+      ]
+    }
+  ]
+}
