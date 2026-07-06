@@ -1,4 +1,4 @@
-# feature-factory
+# Feature Factory
 
 A gated, multi-agent feature pipeline for [Claude Code](https://claude.com/claude-code):
 spec a feature by interrogation, build it in a self-verifying agent loop against the
