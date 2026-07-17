@@ -4,7 +4,8 @@ export const meta = {
   phases: [
     { title: 'Decompose', detail: 'Read PRD + code, produce a sliced plan with acceptance criteria' },
     { title: 'Critique plan', detail: 'Parallel panel hardens the plan before any code is written' },
-    { title: 'Implement', detail: 'One agent per slice, serialized, fast-gate each' },
+    { title: 'Implement', detail: 'One agent per slice: dependent slices serialized, independent slices in parallel worktrees' },
+    { title: 'Merge', detail: 'Apply worktree-isolated slices back to the main tree, fast-gating each' },
     { title: 'Gate', detail: 'Run the project quality gates' },
     { title: 'Audit', detail: 'Verify planned tests actually ran + changes stayed in scope' },
     { title: 'Acceptance', detail: 'Drive the running app (mobile-mcp) through the PRD acceptance criteria' },
@@ -79,6 +80,7 @@ const PLAN_SCHEMA = {
           files: { type: 'array', items: { type: 'string' }, description: 'Files/modules expected to be created or edited' },
           acceptance: { type: 'array', items: { type: 'string' }, description: 'Checkable acceptance criteria, each tied to a PRD requirement' },
           tests: { type: 'array', items: { type: 'string' }, description: 'Tests this slice must add or update' },
+          independent: { type: 'boolean', description: 'true ONLY if this slice touches no file any other slice touches (tests included), depends on no other slice\'s changes, AND no other slice depends on its changes — it will be implemented concurrently in an isolated git worktree and merged back' },
         },
       },
     },
@@ -200,7 +202,7 @@ const plan = await agent(
 CONVENTIONS:
 ${CONVENTIONS}
 
-Each slice must be independently buildable (the fast gate "${gates.fast}" must be able to pass at the end of each slice). Tie every acceptance criterion to a specific PRD requirement. Prefer 3–7 slices; a feature is one coherent narrative, so keep slices sequential where they share modules.${WORKDIR_NOTE} Return the structured plan.`,
+Each slice must be independently buildable (the fast gate "${gates.fast}" must be able to pass at the end of each slice). Tie every acceptance criterion to a specific PRD requirement. Prefer 3–7 slices; a feature is one coherent narrative, so keep slices sequential where they share modules. If a slice's files (tests included) are FULLY disjoint from every other slice's AND no dependency runs in EITHER direction (it needs nothing from any other slice, and no other slice needs anything from it, at compile time or runtime), mark it independent: true — it will be implemented concurrently in an isolated git worktree and merged back. When in doubt leave it false: a wrong true costs a merge conflict, a wrong false only costs wall-clock.${WORKDIR_NOTE} Return the structured plan.`,
   { label: 'decompose-prd', phase: 'Decompose', schema: PLAN_SCHEMA },
 )
 log(`Plan: ${plan.slices.length} slices — ${plan.slices.map(s => s.id).join(', ')}`)
@@ -223,13 +225,28 @@ ${JSON.stringify(plan, null, 2)}`,
 
 if (critiques.some(c => c.verdict === 'block')) log(`Plan blocked by ${critiques.filter(c => c.verdict === 'block').length} lens(es) — revising`)
 let hardenedPlan = await agent(
-  `Revise this implementation plan to resolve the critique issues. Keep the same slice structure where sound; fix what the panel flagged. Return the improved plan.
+  `Revise this implementation plan to resolve the critique issues. Keep the same slice structure where sound; fix what the panel flagged. Re-check each slice's independent flag under the disjointness rule (no file — tests included — shared with any other slice, no cross-slice dependency); clear the flag wherever revision created overlap. Return the improved plan.
 ORIGINAL PLAN:
 ${JSON.stringify(plan, null, 2)}
 CRITIQUES:
 ${JSON.stringify(critiques, null, 2)}`,
   { label: 'harden-plan', phase: 'Critique plan', schema: PLAN_SCHEMA },
 )
+
+// agent() returns null when the subagent dies on a terminal API error (e.g. an
+// auth blip) — observed 2026-07-06 killing a whole run. Retry once before
+// falling back to the unhardened plan.
+if (!hardenedPlan) {
+  log('⚠ harden-plan agent returned null (infra failure); retrying once')
+  hardenedPlan = await agent(
+    `Revise this implementation plan to resolve the critique issues. Keep the same slice structure where sound; fix what the panel flagged. Re-check each slice's independent flag under the disjointness rule (no file — tests included — shared with any other slice, no cross-slice dependency); clear the flag wherever revision created overlap. Return the improved plan.
+ORIGINAL PLAN:
+${JSON.stringify(plan, null, 2)}
+CRITIQUES:
+${JSON.stringify(critiques, null, 2)}`,
+    { label: 'harden-plan:retry', phase: 'Critique plan', schema: PLAN_SCHEMA },
+  )
+}
 
 // Guard: the harden step occasionally returns a DEGENERATE placeholder plan
 // (e.g. summary "probe" with a single stub slice {id:"s1",title:"t",intent:"i",
@@ -243,7 +260,7 @@ const _isStubPlan = (p) =>
     !Array.isArray(s.acceptance) || s.acceptance.length === 0 ||
     s.acceptance.every(a => String(a || '').trim().length <= 2))
 if (_isStubPlan(hardenedPlan) || hardenedPlan.slices.length < plan.slices.length) {
-  log(`⚠ harden-plan returned a degenerate/collapsed plan (${(hardenedPlan.slices || []).length} slice(s) vs decompose's ${plan.slices.length}); keeping the original decompose plan`)
+  log(`⚠ harden-plan returned a degenerate/collapsed plan (${((hardenedPlan || {}).slices || []).length} slice(s) vs decompose's ${plan.slices.length}); keeping the original decompose plan`)
   hardenedPlan = plan
 }
 
@@ -259,14 +276,18 @@ if (cfg.planOnly) {
   }
 }
 
-// ---- Phase 3: Implement, serialized, fast-gated per slice ------------------
-// Serial (not parallel): slices share modules, and the gates need one
-// consistent working tree. Each slice self-fixes until the fast gate is green.
+// ---- Phase 3: Implement — serial chain + parallel worktree slices ----------
+// Dependent slices run SERIAL in the main tree: they share modules, and the
+// fast gate needs one consistent tree. Slices the plan marked `independent`
+// (file-disjoint from every other slice) run CONCURRENTLY, each in its own
+// git worktree, and are merged back — re-proving the fast gate — before the
+// full gates. Each slice self-fixes until the fast gate is green.
 phase('Implement')
-const implResults = []
-for (const slice of hardenedPlan.slices) {
-  const res = await agent(
-    `Implement slice "${slice.id}: ${slice.title}" in the CURRENT working tree.
+const serialSlices = hardenedPlan.slices.filter(s => !s.independent)
+const indepSlices = hardenedPlan.slices.filter(s => s.independent)
+if (indepSlices.length) log(`Parallel worktree slice(s): ${indepSlices.map(s => s.id).join(', ')} — serial chain: ${serialSlices.map(s => s.id).join(', ') || '(none)'}`)
+
+const sliceImplPrompt = (slice) => `Implement slice "${slice.id}: ${slice.title}" in the CURRENT working tree.
 CONVENTIONS:
 ${CONVENTIONS}
 INTENT: ${slice.intent}
@@ -278,12 +299,118 @@ TESTS TO ADD/UPDATE: ${(slice.tests || []).join(', ') || '(decide what proves th
 Read neighboring files first and match their style. After editing, run the fast gate:
     ${gates.fast}${WORKDIR_NOTE}
 Fix anything red and re-run until it passes. Do NOT run the heavier gates here (a later phase runs the full suite). If you add user-facing UI, add the required test hook / testTag the way the codebase does.
-Report your result.`,
-    { label: `impl:${slice.id}`, phase: 'Implement', schema: IMPL_SCHEMA },
-  )
-  implResults.push(res)
-  log(`Slice ${slice.id}: ${res.status}${res.fastGatePassed === false ? ' (fast gate NOT green)' : ''}`)
-  if (res.status === 'blocked') log(`⚠ ${slice.id} blocked: ${res.notes}`)
+Report your result.`
+
+// Extra contract for worktree-isolated slices: stay strictly in-scope, and
+// report where the work lives so the merge agent can find it (worktreePath is
+// required by the widened schema).
+const INDEP_NOTE = `
+
+ISOLATION: you are in your OWN git worktree (an isolated checkout of this repo); a later step merges your work into the main tree. Stay STRICTLY within the expected files and their tests — out-of-scope edits jeopardize the merge. When done, report the absolute path of your checkout's repo root (from \`pwd\`) as worktreePath, and do NOT remove the worktree yourself.`
+const IMPL_INDEP_SCHEMA = {
+  ...IMPL_SCHEMA,
+  required: [...IMPL_SCHEMA.required, 'worktreePath'],
+  properties: { ...IMPL_SCHEMA.properties, worktreePath: { type: 'string', description: 'Absolute path of the isolated git worktree this slice was implemented in' } },
+}
+
+// agent() returns null (not throw) when a subagent dies on a terminal API
+// error — e.g. a connection dropped mid-response or a usage-limit wall — after
+// its retries. Observed 2026-07-07 crashing the run at `res.status`. Synthesize
+// a 'blocked' result (carrying the sliceId the final map needs) so one flaky
+// slice can't kill the whole build: its partial edits stay on disk and the
+// later Gate→Review→Fix loop verifies and completes the slice.
+const blockedResult = (slice, where) => ({
+  sliceId: slice.id, status: 'blocked', fastGatePassed: false, filesTouched: [],
+  notes: `impl agent died on a terminal API error (null result); slice may be partially implemented${where} — the gate/review/fix loop must verify and complete it.`,
+})
+
+const implResults = []
+// One barrier over the serial chain + every independent slice: wall-clock is
+// max(chain, slowest independent), and the main tree is only ever edited by
+// one agent at a time. Merges must NOT start before this barrier — a merge's
+// fast-gate run would otherwise compile the serial chain's half-written code.
+const implSettled = await parallel([
+  async () => {
+    for (const slice of serialSlices) {
+      // Per-slice catch: a thrown agent() (background-and-end-turn on the long
+      // fast gate, budget exhaustion) must not silently truncate the chain —
+      // parallel() would swallow the thunk's throw into a null.
+      let res = null
+      try {
+        res = await agent(sliceImplPrompt(slice), { label: `impl:${slice.id}`, phase: 'Implement', schema: IMPL_SCHEMA })
+      } catch (e) {
+        log(`⚠ impl:${slice.id} threw (${String((e && e.message) || e).slice(0, 100)}); marking blocked and continuing the chain`)
+      }
+      const safeRes = res || blockedResult(slice, '')
+      implResults.push(safeRes)
+      log(`Slice ${slice.id}: ${safeRes.status}${safeRes.fastGatePassed === false ? ' (fast gate NOT green)' : ''}`)
+      if (safeRes.status === 'blocked') log(`⚠ ${slice.id} blocked: ${safeRes.notes}`)
+    }
+    return true
+  },
+  ...indepSlices.map(slice => () =>
+    agent(sliceImplPrompt(slice) + INDEP_NOTE, { label: `impl:${slice.id}`, phase: 'Implement', isolation: 'worktree', schema: IMPL_INDEP_SCHEMA })),
+])
+
+// Belt for thunk-level failures the per-slice catch can't see: if the serial
+// chain died early, keep every unattempted slice visible to the report and the
+// fix loop instead of letting it vanish.
+if (implSettled[0] !== true) {
+  log('⚠ serial implementation chain aborted early; marking unattempted slices blocked')
+  for (const slice of serialSlices) {
+    if (!implResults.some(r => r.sliceId === slice.id)) {
+      implResults.push({ ...blockedResult(slice, ''), notes: 'serial chain aborted before this slice ran; not attempted — the gate/review/fix loop must implement or surface it.' })
+    }
+  }
+}
+
+// ---- Phase 3b: merge worktree slices back into the main tree ---------------
+// Serial among themselves (they all edit the main tree), after the barrier.
+if (indepSlices.length) {
+  phase('Merge')
+  for (let i = 0; i < indepSlices.length; i++) {
+    const slice = indepSlices[i]
+    const impl = implSettled[i + 1] // [0] is the serial-chain thunk
+    if (!impl) {
+      implResults.push(blockedResult(slice, ' in an orphaned worktree (check `git worktree list`)'))
+      log(`⚠ ${slice.id} blocked: impl agent died in its worktree`)
+      continue
+    }
+    const mergePrompt = `Merge independently-implemented slice "${slice.id}: ${slice.title}" from its isolated git worktree into the MAIN working tree (your current directory).
+WORKTREE: ${impl.worktreePath || '(not reported — find it via `git worktree list`: the checkout whose changes match the files below)'}
+IMPLEMENTER'S REPORT: status=${impl.status}; files: ${(impl.filesTouched || []).join(', ') || '(none listed)'}; notes: ${impl.notes}
+
+STEPS:
+1. Sanity-check the worktree (exists, is a git checkout, \`git -C <wt> status\` shows the expected changes). An UNCHANGED worktree is auto-removed by the runtime — so if it is missing or clean AND the implementer reported done with little/no file work, verify the expected end state already holds in the main tree and report status=done with a "nothing to merge" note. Otherwise, if the work is genuinely absent, report status=blocked with what you found.
+2. Extract its diff: \`git -C <wt> add -A && git -C <wt> diff --binary HEAD > <temp file>\`.
+3. Apply it to the main tree from the repo root: \`git apply --3way <patch>\` (fall back to plain \`git apply\` if 3way balks on binaries). Conflicting hunks that are ONLY re-recorded snapshot/golden images with no source change in this slice: keep the MAIN tree's version and drop those hunks. Resolve any real conflict by hand, preserving both slices' intent. SAFETY: if a conflict's main-tree side contains uncommitted work the factory did not make this run (the user's pre-existing edits), that work MUST survive — never revert or delete it.
+4. Run the fast gate and fix integration fallout until green:
+    ${gates.fast}${WORKDIR_NOTE}
+5. Remove the worktree: \`git worktree remove --force <wt>\` (if removal fails, say so in notes).
+Report with sliceId "${slice.id}": status=done ONLY if the slice's changes are fully present in the main tree and the fast gate is green.`
+    // Same throw mode as the Gate step (agent backgrounds the long fast gate and
+    // ends its turn without StructuredOutput): retry once foreground-only, then
+    // degrade to blocked — never let one merge kill the workflow mid-tree.
+    let merged = null
+    try {
+      merged = await agent(mergePrompt, { label: `merge:${slice.id}`, phase: 'Merge', schema: IMPL_SCHEMA })
+    } catch (e) {
+      log(`⚠ merge:${slice.id} threw (${String((e && e.message) || e).slice(0, 100)}); retrying with foreground-only instruction`)
+      try {
+        merged = await agent(mergePrompt + `
+IMPORTANT: run every command in the FOREGROUND and wait for it to complete — do NOT background commands, and do NOT end your turn before reporting results via StructuredOutput.`,
+          { label: `merge:${slice.id}:retry`, phase: 'Merge', schema: IMPL_SCHEMA })
+      } catch (e2) {
+        log(`⚠ merge:${slice.id} retry also threw; marking blocked`)
+      }
+    }
+    const safeMerged = merged || {
+      sliceId: slice.id, status: 'blocked', fastGatePassed: false, filesTouched: [],
+      notes: `merge agent failed; the slice's work may still be unmerged in its worktree (${impl.worktreePath || 'path unknown'}) — the gate/review/fix loop must verify and complete the merge.`,
+    }
+    implResults.push(safeMerged)
+    log(`Merge ${slice.id}: ${safeMerged.status}${safeMerged.fastGatePassed === false ? ' (fast gate NOT green)' : ''}`)
+  }
 }
 
 // ---- Phases 4–6: Gate → Review → Fix, loop until green --------------------
@@ -330,6 +457,15 @@ green=true only if every gate is 'pass' or a legitimate 'skipped'. Never report 
 IMPORTANT: run every gate command in the FOREGROUND and wait for it to complete — do NOT background commands, do NOT use Monitor/wait-for-notification patterns, and do NOT end your turn before all gates have finished and you have reported results via StructuredOutput. Long-running commands are expected; simply wait for them.`,
       withModel({ label: `gate:round-${round}:retry`, phase: 'Gate', schema: GATE_SCHEMA }))
   }
+  // agent() returns null (not throw) when a subagent dies on a terminal API
+  // error — e.g. a usage-limit wall or an infra blip. Observed 2026-07-07
+  // crashing the run at `gate.results`. Treat a missing result as a failed
+  // round so the loop proceeds to Fix (which will run once the model is
+  // reachable again) instead of throwing an unhandled null.
+  if (!gate) {
+    log('⚠ gate agent returned no result (model unavailable / usage limit); treating round as failed')
+    gate = { green: false, results: [{ gate: '(all)', status: 'fail', detail: 'gate agent returned no result — model unavailable or usage limit reached' }] }
+  }
   const gateFails = gate.results.filter(r => r.status === 'fail')
   log(`Round ${round} gate: ${gate.results.map(r => `${r.gate}=${r.status}`).join(' ')}`)
 
@@ -351,6 +487,12 @@ ${declaredFiles.map(f => '- ' + f).join('\n') || '- (none declared)'}
 Report structured findings.`,
     withModel({ label: `audit:round-${round}`, phase: 'Audit', schema: AUDIT_SCHEMA }),
   )
+  // Same null-on-terminal-error guard as the gate step: keep the last good audit
+  // (initialized to empty) rather than crashing on `audit.unmetTests`.
+  if (!audit) {
+    log('⚠ audit agent returned no result (model unavailable / usage limit); skipping audit for this round')
+    audit = { unmetTests: [], scopeIssues: [] }
+  }
   auditBlockers = [
     ...audit.unmetTests.map(t => ({ kind: 'test', title: t.test, detail: t.reason })),
     ...audit.scopeIssues.filter(s => !s.justified).map(s => ({ kind: 'scope', title: s.file, detail: s.why })),

@@ -1,6 +1,6 @@
 ---
 name: build-prd
-description: Interrogate the user (via a /grilling session) and turn the answers into a fleshed-out, factory-ready PRD markdown file for /build-feature to implement. Use whenever the user wants to spec a new feature, "write a PRD" or requirements doc, "prep a spec for build-feature", "grill me for a PRD", wants to plan/pin down/flesh out a feature idea before building it, or asks "what should we decide before building X" — even if they never say the word PRD. Produces the PRD file; it does NOT build the feature (hand off to build-feature for that).
+description: Interrogate the user (via a /grilling session) and turn the answers into a fleshed-out, factory-ready PRD bundle — a per-feature directory docs/prd/<slug>/ holding prd.md, tdd.md (when produced) and assets/ — for /build-feature to implement. Use whenever the user wants to spec a new feature, "write a PRD" or requirements doc, "prep a spec for build-feature", "grill me for a PRD", wants to plan/pin down/flesh out a feature idea before building it, or asks "what should we decide before building X" — even if they never say the word PRD. Produces the PRD directory; it does NOT build the feature (hand off to build-feature for that).
 ---
 
 # build-prd — grill the user, emit a factory-ready PRD
@@ -13,8 +13,8 @@ factory's Decompose phase can tie each one to a slice + acceptance criterion.
 This skill does two things and nothing else:
 1. **Interrogate** — run a `/grilling` session with a PRD-targeted agenda until
    every coverage area below is answered (no hand-waving).
-2. **Assemble** — write the answers into the PRD template as a markdown file,
-   then offer to hand it to `build-feature`.
+2. **Assemble** — write the answers into the PRD template inside a per-feature
+   directory (see "Output layout" in step 3), then offer to hand it to `build-feature`.
 
 It does **not** implement the feature. Stop at the PRD.
 
@@ -30,7 +30,8 @@ It does **not** implement the feature. Stop at the PRD.
 > Related sibling skill: mattpocock's `/to-prd` also emits a PRD, but it does
 > *no* interview and publishes user-stories to an issue tracker. `build-prd` is
 > the `build-feature`-targeted variant: it grills first and writes a local
-> markdown *file* with numbered, gate-checkable requirements.
+> per-feature *directory* (prd.md + companion docs/assets) with numbered,
+> gate-checkable requirements.
 
 ## Why the bar is high
 
@@ -173,8 +174,29 @@ Grill until each has a concrete, testable answer:
     unresolved, after every resolvable area above has been forced to an answer.)
 
 ### 3. Assemble the PRD
-Write to `<repo>/docs/prd/<slug>.md` (create the dir if needed; confirm the path
-with the user if ambiguous). Use the template below verbatim in structure.
+
+**Output layout — one directory per feature.** Create `docs/prd/<slug>/` and keep
+EVERYTHING the spec produces inside it:
+
+```
+docs/prd/<slug>/
+├── prd.md      — the PRD (template below; the path build-feature consumes)
+├── tdd.md      — the technical design, when one is produced
+└── assets/     — everything else generated for the spec: mockups (HTML/images),
+                  golden-sample files, eval fixtures, diagrams, exported research
+```
+
+Why a directory: features accumulate companions (TDD, mockups, fixtures), and flat
+`<slug>.md` + `<slug>-tdd.md` siblings scatter them across `docs/prd/`. A directory
+keeps the spec bundle atomic — one thing to review, one place for the factory to
+look, and one unit for `finish-feature` to archive (it moves the whole
+`docs/prd/<slug>/` into `docs/prd/archive/`). Cross-reference companions by
+RELATIVE path (`./tdd.md`, `./assets/mockups.html`) so links survive the archive
+move. If session artifacts were produced outside the repo (scratchpad mockups,
+diagrams), copy them into `assets/` — scratchpads are ephemeral; the bundle is not.
+
+Confirm the path with the user only if the repo already uses a conflicting
+convention. Use the template below verbatim in structure.
 Rules for a factory-clean PRD:
 - **Number requirements** `R1, R2, …` and give each its own acceptance
   criteria. One-to-one requirement↔criteria mapping is what lets Decompose slice
@@ -236,10 +258,13 @@ Run this rubric; fix anything that fails, then show the user the PRD:
 - [ ] Device feel pass populated from the user's hand-check answers.
 - [ ] No requirement contains an unresolved open question.
 - [ ] Context names real modules/files the feature touches.
+- [ ] Output layout: everything lives under `docs/prd/<slug>/` (prd.md, tdd.md if
+      any, assets/); companion links are relative; no spec artifact left in a
+      scratchpad or scattered as a flat `docs/prd/<slug>-*.md` sibling.
 - [ ] A stranger agent could build this without asking you a question.
 
 ### 5. Hand off
-Offer: "Ready to build? Run `/build-feature docs/prd/<slug>.md`." Do not launch
+Offer: "Ready to build? Run `/build-feature docs/prd/<slug>/prd.md`." Do not launch
 the factory yourself unless the user says go — building is a separate, explicit,
 token-heavy opt-in owned by `build-feature`.
 
