@@ -81,6 +81,28 @@ class DetectTest(unittest.TestCase):
         self.assertIsNone(self.detect(["README.md"]))
 
 
+class FindProfileTest(unittest.TestCase):
+    def test_bundled_dir_serves_shipped_profiles(self):
+        # kmp-android-ios.json ships beside resolve.py.
+        p = resolve.find_profile("kmp-android-ios")
+        self.assertIsNotNone(p)
+        self.assertTrue(p.endswith("kmp-android-ios.json"))
+
+    def test_user_dir_wins_over_bundled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            override = os.path.join(tmp, "kmp-android-ios.json")
+            open(override, "w").write("{}")
+            old = resolve.USER_PROFILE_DIR
+            resolve.USER_PROFILE_DIR = tmp
+            try:
+                self.assertEqual(resolve.find_profile("kmp-android-ios"), override)
+            finally:
+                resolve.USER_PROFILE_DIR = old
+
+    def test_missing_everywhere_is_none(self):
+        self.assertIsNone(resolve.find_profile("no-such-stack"))
+
+
 class MergeTest(unittest.TestCase):
     BASE = {
         "gates": {"fast": "make fast", "e2e": "make e2e"},

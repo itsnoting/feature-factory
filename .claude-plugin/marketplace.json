@@ -1,0 +1,14 @@
+{
+  "name": "itsnoting-plugins",
+  "description": "Kevin Ting's Claude Code plugins — currently the Feature Factory PRD-to-production pipeline.",
+  "owner": {
+    "name": "Kevin Ting"
+  },
+  "plugins": [
+    {
+      "name": "feature-factory",
+      "source": "./",
+      "description": "PRD-to-production pipeline: grill a PRD out of a fuzzy idea, build it via a gated multi-agent factory, then archive the shipped spec into a living product registry."
+    }
+  ]
+}

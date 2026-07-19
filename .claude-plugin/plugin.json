@@ -1,0 +1,19 @@
+{
+  "name": "feature-factory",
+  "displayName": "Feature Factory",
+  "version": "0.2.0",
+  "description": "PRD-to-production pipeline: /build-prd interrogates a fuzzy idea into a factory-ready PRD, /build-feature implements it via a gated multi-agent workflow with adversarial review, and /finish-feature archives the shipped spec and maintains a living product-spec registry.",
+  "author": {
+    "name": "Kevin Ting"
+  },
+  "license": "MIT",
+  "keywords": [
+    "prd",
+    "spec",
+    "feature-factory",
+    "multi-agent",
+    "workflow",
+    "quality-gates",
+    "product-registry"
+  ]
+}

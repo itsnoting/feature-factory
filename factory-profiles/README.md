@@ -10,7 +10,9 @@ build-feature skill  →  resolve.py  →  merged config JSON  →  feature-fact
 ```
 `resolve.py`:
 1. Detects the codebase type from marker files in the repo root (`detect_profile()`).
-2. Loads the matching `<id>.json` from this directory.
+2. Loads the matching `<id>.json` — `~/.claude/factory-profiles/` (user
+   extension dir) wins over the bundled directory beside `resolve.py`, so you
+   can override or add stacks without touching the plugin.
 3. Merges an optional repo overlay at `<repo>/.claude/factory.json` on top.
 4. Prints the merged config.
 
@@ -52,7 +54,8 @@ profile + overlay split, and proves the fast gate before launching). See the
 build-feature SKILL.md.
 
 By hand:
-1. Create `<id>.json` here (copy `kmp-android-ios.json`).
+1. Create `<id>.json` in `~/.claude/factory-profiles/` (user dir — survives
+   plugin updates) or here in the bundled dir (copy `kmp-android-ios.json`).
 2. Add a detection rule to `detect_profile()` in `resolve.py` **and a case in
    `test_resolve.py`** (beware lookalikes: Flutter/RN repos contain both native
    trees and must be ruled out before broader rules — see the existing guards).

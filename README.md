@@ -35,14 +35,33 @@ preflight loads them back, so every feature makes the next PRD sharper.
 
 ## Install
 
+This repo is a Claude Code **plugin marketplace** — install with two commands
+inside Claude Code:
+
+```
+/plugin marketplace add itsnoting/feature-factory
+/plugin install feature-factory@itsnoting-plugins
+```
+
+Skills arrive namespaced: `/feature-factory:build-prd`,
+`/feature-factory:build-feature`, `/feature-factory:finish-feature`. Profiles
+resolve from the plugin's bundled `factory-profiles/`, with
+`~/.claude/factory-profiles/` as a user-override dir that wins on conflict.
+
+<details>
+<summary>Manual (loose) install — no plugin system</summary>
+
 ```bash
-git clone git@github.com:itsnoting/feature-factory.git
+git clone https://github.com/itsnoting/feature-factory.git
 cd feature-factory
 mkdir -p ~/.claude/workflows ~/.claude/factory-profiles ~/.claude/skills
 cp workflows/feature-factory.js        ~/.claude/workflows/
 cp factory-profiles/*                  ~/.claude/factory-profiles/
 cp -R skills/build-prd skills/build-feature skills/finish-feature ~/.claude/skills/
 ```
+
+Do NOT combine both installs — duplicate skills will collide.
+</details>
 
 Requirements:
 - Claude Code with the Workflow tool (the factory is a background multi-agent

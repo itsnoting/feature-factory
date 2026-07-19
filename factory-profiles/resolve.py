@@ -3,22 +3,38 @@
 
 Deterministic profile selection for the `build-feature` skill:
   1. Sniff marker files in $PWD to detect the codebase type.
-  2. Load the matching global profile from ~/.claude/factory-profiles/<id>.json.
+  2. Load the matching profile <id>.json — the user dir
+     (~/.claude/factory-profiles/) wins over the bundled dir (next to this
+     script), so users can override or add stacks without touching the plugin.
   3. Merge an optional repo-local overlay ($PWD/.claude/factory.json) on top.
   4. Print the merged config as JSON on stdout.
 
 The skill runs this, then passes the JSON straight into the feature-factory
 workflow as `args`. Detection is file-existence based, never model judgment.
 
-Add a new stack: create ~/.claude/factory-profiles/<id>.json and add a rule
-to detect_profile() below.
+Add a new stack: drop <id>.json into ~/.claude/factory-profiles/ (or the
+bundled dir) and add a rule to detect_profile() below — or just run the
+build-feature skill in the new repo and let its first-run profile setup do
+both with you.
 """
 import json
 import os
 import sys
 
 HOME = os.path.expanduser("~")
-PROFILE_DIR = os.path.join(HOME, ".claude", "factory-profiles")
+# Bundled profiles ship beside this script (plugin install or ~/.claude copy);
+# ~/.claude/factory-profiles is the user-extension dir and wins on conflict.
+BUNDLED_PROFILE_DIR = os.path.dirname(os.path.abspath(__file__))
+USER_PROFILE_DIR = os.path.join(HOME, ".claude", "factory-profiles")
+
+
+def find_profile(pid):
+    """Path to <pid>.json, user dir first, else bundled dir, else None."""
+    for d in (USER_PROFILE_DIR, BUNDLED_PROFILE_DIR):
+        p = os.path.join(d, pid + ".json")
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def exists(*parts):
@@ -102,19 +118,21 @@ def main():
                      + os.getcwd(),
             "detected": None,
             "hint": "Run the build-feature skill's first-run profile setup "
-                    "(it interviews the user and persists a profile + detect "
-                    "rule), or pass gates explicitly via args.",
+                    "(it interviews the user, persists a profile to "
+                    "~/.claude/factory-profiles/ and adds a detect rule), or "
+                    "pass gates explicitly via args.",
         }, indent=2))
         return
 
-    profile_path = os.path.join(PROFILE_DIR, pid + ".json")
-    if not os.path.exists(profile_path):
+    profile_path = find_profile(pid)
+    if profile_path is None:
         print(json.dumps({
-            "error": f"Detected codebase type '{pid}' but no profile file exists "
-                     f"at {profile_path}.",
+            "error": f"Detected codebase type '{pid}' but no profile file named "
+                     f"{pid}.json exists in {USER_PROFILE_DIR} or "
+                     f"{BUNDLED_PROFILE_DIR}.",
             "detected": pid,
-            "hint": f"Run the build-feature skill's first-run profile setup to "
-                    f"create {profile_path} with the user (or copy "
+            "hint": "Run the build-feature skill's first-run profile setup to "
+                    f"create {pid}.json with the user (or copy "
                     "kmp-android-ios.json as a template by hand).",
         }, indent=2))
         return

@@ -8,10 +8,24 @@ description: Build a feature from a fleshed-out PRD via a gated multi-agent fact
 Turns a fleshed-out PRD into a working, gate-verified feature by resolving the
 project's build profile and running the `feature-factory` Workflow.
 
-- **Engine (generic):** `~/.claude/workflows/feature-factory.js`
-- **Resolver (deterministic):** `~/.claude/factory-profiles/resolve.py`
-- **Profiles (data):** `~/.claude/factory-profiles/<stack>.json`
+- **Engine (generic):** `<PLUGIN_ROOT>/workflows/feature-factory.js`
+- **Resolver (deterministic):** `<PLUGIN_ROOT>/factory-profiles/resolve.py`
+- **Profiles (data):** `<PLUGIN_ROOT>/factory-profiles/<stack>.json`; user
+  overrides in `~/.claude/factory-profiles/<stack>.json` (user dir wins)
 - **Repo overlay (optional):** `<repo>/.claude/factory.json`
+
+**Resolving `<PLUGIN_ROOT>`:** these files travel with the plugin, so pin the
+root once, up front. Use the `CLAUDE_PLUGIN_ROOT` env var when set; otherwise
+this skill's own base directory (announced when the skill loads, e.g.
+`…/skills/build-feature`) sits two levels below the plugin root:
+
+```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "<this skill's base dir>/../.." && pwd)}"
+```
+
+(Legacy loose install: if neither location has `workflows/feature-factory.js`,
+fall back to `~/.claude/workflows/feature-factory.js` and
+`~/.claude/factory-profiles/`.)
 
 ## The loop
 decompose PRD → critique the plan (before coding) → implement slice-by-slice
@@ -57,10 +71,11 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
 
 2. **Resolve the build profile.** Run:
    ```
-   python3 ~/.claude/factory-profiles/resolve.py
+   python3 "$PLUGIN_ROOT/factory-profiles/resolve.py"
    ```
-   from the repo root. It sniffs marker files, loads the matching global profile,
-   and merges any repo-local `.claude/factory.json` overlay. Capture the JSON.
+   from the repo root. It sniffs marker files, loads the matching profile
+   (user `~/.claude/factory-profiles/` beats the bundled set), and merges any
+   repo-local `.claude/factory.json` overlay. Capture the JSON.
    - If it returns an `error` — unknown stack, or a detected stack with no
      profile file yet — do NOT stop, and do NOT quietly hand-assemble args for
      just this run: run **First-run profile setup** (below). It builds the
@@ -83,7 +98,7 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
 4. **Launch the factory.** Call the Workflow tool with the resolved config as args:
    ```
    Workflow({
-     scriptPath: '~/.claude/workflows/feature-factory.js',
+     scriptPath: '<PLUGIN_ROOT>/workflows/feature-factory.js',  // absolute, resolved above
      args: { prd: '<path>', maxRounds: 3, ...resolvedProfileJSON }
    })
    ```
@@ -143,19 +158,23 @@ not a research assignment.
    - **review dimensions**: offer the engine defaults (correctness,
      conventions, test-coverage) plus one optional domain lens for this repo.
 
-3. **Persist with the layering rule.** Stack-shaped answers go in a NEW global
-   profile `~/.claude/factory-profiles/<id>.json` (copy the shape of
-   `kmp-android-ios.json`); nothing in it may be true only of this repo or this
-   machine. Repo-specific answers (the domain lens, project conventions,
-   machine quirks) go in the repo overlay `<repo>/.claude/factory.json`. When
-   in doubt, overlay — an over-specific profile silently misconfigures the
-   NEXT repo of the same stack, and nobody notices until its gates lie.
+3. **Persist with the layering rule.** Stack-shaped answers go in a NEW profile
+   `~/.claude/factory-profiles/<id>.json` — the user-extension dir the resolver
+   checks first; never write into the plugin's bundled dir, where an update
+   would clobber it. Copy the shape of the bundled `kmp-android-ios.json`;
+   nothing in a profile may be true only of this repo or this machine.
+   Repo-specific answers (the domain lens, project conventions, machine quirks)
+   go in the repo overlay `<repo>/.claude/factory.json`. When in doubt,
+   overlay — an over-specific profile silently misconfigures the NEXT repo of
+   the same stack, and nobody notices until its gates lie.
 
 4. **Unknown stack?** If detection itself failed (the resolver returned no id),
    name the stack with the user, add a marker-file rule for it to
-   `detect_profile()` in `~/.claude/factory-profiles/resolve.py` plus a case in
-   `test_resolve.py`, and run those tests. Detection stays deterministic —
-   file-existence markers only, never model judgment.
+   `detect_profile()` in `$PLUGIN_ROOT/factory-profiles/resolve.py` plus a case
+   in `test_resolve.py`, and run those tests. If the plugin root is a git
+   checkout, offer to commit the new rule so it survives plugin updates.
+   Detection stays deterministic — file-existence markers only, never model
+   judgment.
 
 5. **Prove the config before spending tokens on it.** Re-run `resolve.py` and
    confirm it now returns the merged config cleanly. Then run the `fast` gate
@@ -166,8 +185,10 @@ not a research assignment.
 
 ## Tuning
 - `maxRounds` (default 3) caps the gate→review→fix loop.
-- Change gates/dimensions for a whole stack by editing its profile JSON.
+- Change gates/dimensions for a whole stack by editing its profile JSON
+  (bundled in `$PLUGIN_ROOT/factory-profiles/`, or your override in
+  `~/.claude/factory-profiles/`).
 - Change them for one repo via `<repo>/.claude/factory.json` (overlay — see
-  `~/.claude/factory-profiles/README.md`).
+  `$PLUGIN_ROOT/factory-profiles/README.md`).
 - For a small change that doesn't warrant the fan-out, skip the factory and just
   implement inline with `/code-review` + the profile's gate commands.
