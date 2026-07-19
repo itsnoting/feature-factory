@@ -24,6 +24,37 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
 1. **Confirm the PRD path.** If the user didn't name one, ask which markdown file
    is the spec. The factory reads it directly — no need to paste contents.
 
+1b. **Inventory the whole spec directory — the PRD is rarely the only artifact.**
+   `build-prd` emits a *bundle* (`docs/prd/<slug>/` holding `prd.md`, `tdd.md`,
+   `assets/`), and specs accumulate companions over time: design mockups,
+   research exports, golden fixtures, diagrams, API samples. **The engine reads
+   ONLY the file you name.** Everything else is invisible unless you surface it.
+
+   List the PRD's directory recursively, then build a **companion-artifact
+   manifest** and inject it into `conventions` (see step 4). For each artifact
+   give the path, one line on what it contains, and — critically — **when an
+   implementer must open it**:
+
+   ```
+   COMPANION ARTIFACTS — open these, do not work from the PRD prose alone.
+   - ./tdd.md — the technical design. Read before the first slice.
+   - ./assets/mockups/NN-host.png — host flow layout, hierarchy and copy.
+     Open before building any host surface.
+   - ../../research/foo.md — prior art; read before choosing an approach.
+   ```
+
+   Two rules that make the difference between this working and not:
+   - **Name the trigger, not just the file.** "Mockups exist" gets ignored;
+     "open `NN-guest.png` before building the guest surface" does not.
+   - **Follow references OUT of the bundle.** A PRD that points at
+     `docs/<feature>/assets/` (canonical, shared, deliberately not duplicated
+     into the bundle) still needs those paths in the manifest. Resolve every
+     relative link in the PRD and include the targets.
+
+   Say which artifact types you found so the user can spot a missing one before
+   hours of building start. Prose-only builds of a surface that HAS a mockup are
+   the single most common source of "that's not what I meant" rework.
+
 2. **Resolve the build profile.** Run:
    ```
    python3 ~/.claude/factory-profiles/resolve.py
@@ -57,6 +88,17 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
    (Spread the resolver's JSON into args so `gates`, `conventions`,
    `reviewDimensions`, `gateNotes`, `procedures` flow through. Drop the
    `_resolved` key or leave it — the engine ignores it.)
+
+   **Append step 1b's companion-artifact manifest to `conventions`.** That
+   string is the only channel injected into every implementer, reviewer and
+   fixer prompt, so it is the only place an instruction reliably reaches the
+   agent writing the code. A manifest that lives solely in the PRD body gets
+   read once by the decomposer and forgotten by everyone downstream.
+
+   If any artifact is NORMATIVE — an animation spec with exact durations, an
+   approved copy deck, a golden fixture — say so explicitly and say what
+   deviation means. "NORMATIVE: do not invent timings; drift from this is a
+   defect" binds. "See the animation spec" does not.
    It runs in the background and notifies on completion. Watch with `/workflows`.
    This spawns many agents and is token-heavy — this skill IS the explicit opt-in.
 
