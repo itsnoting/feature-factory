@@ -83,7 +83,10 @@ concrete options per gap; this is the skill's own gap-fill mechanism, distinct
 from the one-at-a-time grilling).
 
 #### PRD Coverage Checklist (the agenda for /grilling)
-Grill until each has a concrete, testable answer:
+Grill until each has a concrete, testable answer. (Headless/API/CLI feature?
+UI-bound items — 8's motion half, 15's on-device checks — still get asked, but
+"N/A — no UI" is a valid concrete answer; record it rather than skipping the
+item silently.)
 
 **Frame it —**
 

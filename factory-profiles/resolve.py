@@ -38,6 +38,14 @@ def glob_ext(ext):
 
 
 def detect_profile():
+    # Flutter and React Native repos ALSO contain android/ with gradle AND an
+    # .xcodeproj, so they must be ruled out BEFORE the KMP check or they
+    # false-positive as kmp-android-ios and get handed gates (Roborazzi etc.)
+    # that don't exist there.
+    if exists("pubspec.yaml"):
+        return "flutter"                 # profile file may not exist yet
+    if exists("metro.config.js") or exists("react-native.config.js"):
+        return "react-native"            # profile file may not exist yet
     # Gradle root may be at the repo root OR in an android/ subdir (KMP split
     # layout where iosApp/ is a sibling of the Gradle project).
     gradle = (exists("settings.gradle.kts") or exists("settings.gradle")
@@ -93,8 +101,9 @@ def main():
             "error": "Could not detect a codebase type from marker files in "
                      + os.getcwd(),
             "detected": None,
-            "hint": "Pass gates explicitly via args, or add a profile to "
-                    "~/.claude/factory-profiles/ and a detect rule to resolve.py.",
+            "hint": "Run the build-feature skill's first-run profile setup "
+                    "(it interviews the user and persists a profile + detect "
+                    "rule), or pass gates explicitly via args.",
         }, indent=2))
         return
 
@@ -104,8 +113,9 @@ def main():
             "error": f"Detected codebase type '{pid}' but no profile file exists "
                      f"at {profile_path}.",
             "detected": pid,
-            "hint": f"Create {profile_path} (copy kmp-android-ios.json as a "
-                    "template) with the gates and review dimensions for this stack.",
+            "hint": f"Run the build-feature skill's first-run profile setup to "
+                    f"create {profile_path} with the user (or copy "
+                    "kmp-android-ios.json as a template by hand).",
         }, indent=2))
         return
 

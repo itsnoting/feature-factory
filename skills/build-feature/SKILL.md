@@ -61,9 +61,11 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
    ```
    from the repo root. It sniffs marker files, loads the matching global profile,
    and merges any repo-local `.claude/factory.json` overlay. Capture the JSON.
-   - If it returns an `error` (unknown stack / missing profile), tell the user
-     what's missing. Either add a profile (copy `kmp-android-ios.json` as a
-     template) or gather the gate commands from the user and pass them via `args`.
+   - If it returns an `error` — unknown stack, or a detected stack with no
+     profile file yet — do NOT stop, and do NOT quietly hand-assemble args for
+     just this run: run **First-run profile setup** (below). It builds the
+     missing profile WITH the user and persists it, so this cost is paid once
+     per stack, not once per repo. Then re-run the resolver and continue.
 
 3. **Preflight.** Read the resolved `gates`, `procedures`, and `acceptance`:
    - If an `e2e` gate exists, it usually needs an emulator/simulator — run
@@ -112,6 +114,55 @@ adversarial review, every finding verified by a skeptic → fix → repeat until
    - Once the feature has actually shipped, run `/finish-feature` — it verifies
      the implementation landed, marks the TDD as-built, archives the PRD/TDD out
      of the active queue, and records the feature in the product-spec registry.
+
+## First-run profile setup (missing or unknown profile)
+
+The factory is only as good as its gates, and gates differ per stack — so when
+no profile exists, build one in a short interview instead of guessing or
+bailing. The user is the authority on what "checked" means in their project;
+your job is to arrive with good candidates so each question is a confirmation,
+not a research assignment.
+
+1. **Scout before asking.** Read the repo's own definition of "verified": CI
+   workflows (`.github/workflows/*.yml` usually contain the real gate commands),
+   `package.json` scripts, Makefile/justfile targets, gradle tasks,
+   `pyproject.toml`/tox/nox, `Cargo.toml`, pre-commit hooks. Draft a candidate
+   command for each gate from what you find, and note where each came from.
+
+2. **Interview with batched AskUserQuestion** (recommended, scouted option
+   first):
+   - **fast** (required): the build + unit-test command that must stay green
+     after every slice. Offer the CI-derived candidate(s).
+   - **snapshot / e2e** (optional): heavier proof commands if the stack has
+     them (visual regression, integration, device/browser tests) — and what
+     makes a legitimate `skipped` (no device attached, no server running).
+   - **workdir**: only ask if build files aren't at the repo root.
+   - **conventions**: propose 3–5 sentences drafted from the codebase scan
+     (module layout, DI/state patterns, test-id conventions); let the user
+     amend rather than compose from scratch.
+   - **review dimensions**: offer the engine defaults (correctness,
+     conventions, test-coverage) plus one optional domain lens for this repo.
+
+3. **Persist with the layering rule.** Stack-shaped answers go in a NEW global
+   profile `~/.claude/factory-profiles/<id>.json` (copy the shape of
+   `kmp-android-ios.json`); nothing in it may be true only of this repo or this
+   machine. Repo-specific answers (the domain lens, project conventions,
+   machine quirks) go in the repo overlay `<repo>/.claude/factory.json`. When
+   in doubt, overlay — an over-specific profile silently misconfigures the
+   NEXT repo of the same stack, and nobody notices until its gates lie.
+
+4. **Unknown stack?** If detection itself failed (the resolver returned no id),
+   name the stack with the user, add a marker-file rule for it to
+   `detect_profile()` in `~/.claude/factory-profiles/resolve.py` plus a case in
+   `test_resolve.py`, and run those tests. Detection stays deterministic —
+   file-existence markers only, never model judgment.
+
+5. **Prove the config before spending tokens on it.** Re-run `resolve.py` and
+   confirm it now returns the merged config cleanly. Then run the `fast` gate
+   once, exactly as configured: every slice self-fixes against that command, so
+   a wrong or broken gate poisons the whole run. Green — or failures the user
+   recognizes as pre-existing — is the launch condition. Then continue from
+   step 3 (Preflight).
 
 ## Tuning
 - `maxRounds` (default 3) caps the gate→review→fix loop.

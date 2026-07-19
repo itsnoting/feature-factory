@@ -299,6 +299,7 @@ TESTS TO ADD/UPDATE: ${(slice.tests || []).join(', ') || '(decide what proves th
 Read neighboring files first and match their style. After editing, run the fast gate:
     ${gates.fast}${WORKDIR_NOTE}
 Fix anything red and re-run until it passes. Do NOT run the heavier gates here (a later phase runs the full suite). If you add user-facing UI, add the required test hook / testTag the way the codebase does.
+Leave every change UNCOMMITTED — never git-commit: the Review phase reads the uncommitted diff, so a committed slice becomes invisible to review.
 Report your result.`
 
 // Extra contract for worktree-isolated slices: stay strictly in-scope, and
@@ -387,6 +388,7 @@ STEPS:
 4. Run the fast gate and fix integration fallout until green:
     ${gates.fast}${WORKDIR_NOTE}
 5. Remove the worktree: \`git worktree remove --force <wt>\` (if removal fails, say so in notes).
+Do NOT git-commit anything — the Review phase reads the uncommitted diff.
 Report with sliceId "${slice.id}": status=done ONLY if the slice's changes are fully present in the main tree and the fast gate is green.`
     // Same throw mode as the Gate step (agent backgrounds the long fast gate and
     // ends its turn without StructuredOutput): retry once foreground-only, then
@@ -432,6 +434,7 @@ const allAcceptance = [...new Set(hardenedPlan.slices.flatMap(s => s.acceptance 
 let round = 0
 let gate = null
 let confirmed = []
+let minorFindings = []
 let auditBlockers = []
 let audit = { unmetTests: [], scopeIssues: [] }
 let acceptance = []
@@ -474,6 +477,9 @@ IMPORTANT: run every gate command in the FOREGROUND and wait for it to complete 
   phase('Audit')
   audit = await agent(
     `Audit the current working tree against the plan. Use git (git diff HEAD --name-only, git status --porcelain to include untracked files) and read files as needed.
+
+GATE RESULTS from this round (the "gate output" referenced below):
+${JSON.stringify(gate.results, null, 2)}
 
 1. TEST COVERAGE — for each planned test below, confirm the test FILE exists AND that it actually RAN in the gate output above (not reported NO-SOURCE / skipped). A test that exists but was reported NO-SOURCE never executed — that is an unmet test. If unsure it ran, run that module's specific test task (e.g. ./gradlew :feature:<module>:testDebugUnitTest) and check it executed real test cases.${WORKDIR_NOTE}
 Planned tests:
@@ -542,6 +548,10 @@ Inspect the diff with git and read the changed files. Report concrete findings w
   ))).filter(Boolean)
 
   const candidate = reviews.flatMap(r => r.findings.map(f => ({ ...f, dimension: r.dimension })))
+  // Minor findings skip verification and the fix loop by design (not worth an
+  // agent each), but they must not vanish: carry them into the result for the
+  // human close-out instead of silently dropping them.
+  minorFindings = candidate.filter(f => f.severity === 'minor')
   // Verify each non-minor finding with an independent skeptic; keep only the real ones.
   confirmed = (await parallel(candidate.filter(f => f.severity !== 'minor').map(f => () =>
     agent(`A reviewer claims this is a real problem in the current changes. Try to REFUTE it by reading the actual code. Default to real=false if you cannot confirm it.
@@ -552,7 +562,7 @@ WHY: ${f.why}`,
       .then(v => (v && v.real ? { ...f, reason: v.reason } : null)),
   ))).filter(Boolean)
 
-  log(`Round ${round}: ${gateFails.length} gate failure(s), ${auditBlockers.length} audit blocker(s), ${acceptanceBlockers.length} acceptance failure(s), ${confirmed.length} confirmed finding(s)`)
+  log(`Round ${round}: ${gateFails.length} gate failure(s), ${auditBlockers.length} audit blocker(s), ${acceptanceBlockers.length} acceptance failure(s), ${confirmed.length} confirmed finding(s), ${minorFindings.length} minor (unverified, surfaced in result)`)
 
   // -- Exit only if gates green AND nothing outstanding (audit + acceptance + review) --
   if (gate.green && auditBlockers.length === 0 && acceptanceBlockers.length === 0 && confirmed.length === 0) {
@@ -580,7 +590,7 @@ ACCEPTANCE FAILURES (the running app did not behave as the criterion requires �
 ${acceptanceBlockers.map(b => `- [${b.platform}] ${b.title} — observed: ${b.detail}`).join('\n') || '(none)'}
 CONFIRMED REVIEW FINDINGS:
 ${confirmed.map(f => `- [${f.severity}][${f.dimension}] ${f.title} (${f.file}) — ${f.why}`).join('\n') || '(none)'}
-After fixing, run "${gates.fast}" and ensure it is green.${WORKDIR_NOTE}`,
+After fixing, run "${gates.fast}" and ensure it is green. Leave everything UNCOMMITTED (no git commit) — the next round's Review reads the uncommitted diff.${WORKDIR_NOTE}`,
     withModel({ label: `fix:round-${round}`, phase: 'Fix', schema: IMPL_SCHEMA }),
   )
 }
@@ -589,11 +599,15 @@ After fixing, run "${gates.fast}" and ensure it is green.${WORKDIR_NOTE}`,
 return {
   prd: PRD,
   plan: hardenedPlan.summary,
-  slices: implResults.map(r => ({ id: r.sliceId, status: r.status })),
+  // Worktree slices produce an impl entry AND a merge entry with the same
+  // sliceId — keep the LAST per id (the merge outcome supersedes the isolated
+  // impl) so the report shows one row per slice.
+  slices: [...new Map(implResults.map(r => [r.sliceId, r])).values()].map(r => ({ id: r.sliceId, status: r.status })),
   rounds: round,
   finalGate: gate ? gate.results : [],
   green: !!(gate && gate.green && auditBlockers.length === 0 && acceptanceBlockers.length === 0 && confirmed.length === 0),
   openFindings: confirmed,
+  minorFindings,
   unmetTests: audit.unmetTests,
   outOfScopeChanges: audit.scopeIssues,
   acceptance,

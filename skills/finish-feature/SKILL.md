@@ -38,11 +38,12 @@ Zero config needed in the common case. Defaults, in resolution order:
 3. Neither? Ask the user where specs live rather than guessing.
 
 Directory shape: each feature is a directory `<prdDir>/<slug>/` containing the
-PRD (`<slug>.md` or `.html`) and `TDD.md`. A loose `<prdDir>/<slug>.md` file is
-fine too — it gains its directory on the way into the archive. Adapt to what
-the repo actually has (a spec without a TDD, different filenames): the steps
-below care about the roles (spec of record, design doc, registry), not the
-exact names.
+PRD (`prd.md` — the layout `build-prd` emits; older bundles used `<slug>.md` or
+`.html`) and the design doc (`tdd.md`, older `TDD.md`), plus any `assets/`. A
+loose `<prdDir>/<slug>.md` file is fine too — it gains its directory on the way
+into the archive. Adapt to what the repo actually has (a spec without a TDD,
+different filenames): the steps below care about the roles (spec of record,
+design doc, registry), not the exact names.
 
 ## Steps
 
@@ -143,7 +144,8 @@ invariants, module boundaries, persisted formats, URL schemes, platform
 behaviors. Write them as checkable statements citing real symbols
 ("`export()` emits schema v2, pinned by `ExportRoundTripTest`"), not vibes.
 
-**Spec:** [PRD](prd/archive/<slug>/<slug>.md) · [TDD](prd/archive/<slug>/TDD.md)
+**Spec:** [PRD](prd/archive/<slug>/prd.md) · [TDD](prd/archive/<slug>/tdd.md)
+<!-- use the bundle's ACTUAL filenames — older bundles: <slug>.md / TDD.md -->
 ```
 
 If an entry for the feature already exists (e.g. a backfilled stub), update it
