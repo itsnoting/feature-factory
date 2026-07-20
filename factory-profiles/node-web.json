@@ -1,0 +1,35 @@
+{
+  "id": "node-web",
+  "displayName": "Node web app (Vite + React + TypeScript)",
+  "detect": "package.json at the resolve root, reached only after the Flutter, React Native and Gradle/Xcode rules have all missed. IMPORTANT for MONOREPOS that hold a native app alongside the web app: detect_profile() checks the native markers FIRST, so from a repo root containing android/settings.gradle.kts or iosApp/ you will always get the native profile. Run the resolver (and the factory) from the web subdirectory to select this one.",
+  "workdir": ".",
+  "gates": {
+    "fast": "npm run typecheck && npm run test:run && npm run build",
+    "e2e": "npx tsx scripts/verify-catalog-parity.ts"
+  },
+  "gatesComment": "Script names assume the conventional Vite set (dev/build/preview/typecheck) plus a NON-WATCH test script. `vitest` alone never exits and will hang the gate forever, so the gate must call the `run` variant. `build` here is `tsc -b && vite build`, so it type-checks again; that is deliberate redundancy, not waste. `typecheck` runs first because it fails fastest and with the clearest message, and `build` runs last because it is the only step that catches Vite-specific breakage (asset imports, env access, bundler resolution) that tsc cannot see.\n\nTHERE IS NO `snapshot` GATE, deliberately. This stack has no visual-regression tooling, and the engine filters GATE_ORDER to the keys actually present, so omitting it is honest rather than broken. Do NOT invent one: a fabricated snapshot command that trivially exits 0 is worse than none, because it reports green while proving nothing. If visual regression is wanted later, the two real options are vitest DOM snapshots (cheap, catches markup drift, blind to CSS) or Playwright screenshots (catches real rendering, needs browsers in CI). Add the tool first, then add the gate.",
+  "gateNotes": {
+    "fast": "If `test:run` reports 'No test files found', treat it as a FAILURE, not a pass. Vitest exits 0 on an empty run, so a broken test glob looks identical to a green suite. Confirm the run printed a non-zero test count.",
+    "e2e": "Not browser end-to-end: this slot carries the CROSS-CLIENT DATA PARITY check, which is the highest-value automated check this codebase has (see reviewDimensions.cross-client-parity). It loads the bundled gamedata through the real buildCatalog and asserts the materialized pilots match the points file, with expectations DERIVED from that file rather than hardcoded, so a data resync cannot silently drift past it.\n\nIt runs under `npx tsx`, which is NOT a declared dependency, so the first run may fetch it and an offline machine will fail on the fetch rather than on a parity break. Report that distinctly: a tsx download failure is 'skipped, tooling unavailable', a parity mismatch is a hard 'fail'. Adding tsx as a devDependency and a real npm script is a worthwhile cleanup."
+  },
+  "conventions": "Vite + React + TypeScript, strict. Match the surrounding code's naming, comment density and idiom; read neighbouring files before adding anything, and do not add dependencies without strong justification.\n\nCROSS-CLIENT PARITY IS THIS CODEBASE'S NUMBER ONE DEFECT SOURCE. The web app re-implements logic that already exists in Kotlin, so the two drift silently and the gates on each side stay green while they disagree. Real examples: the web catalog re-implements KMP slot and bearing decoding by hand and has drifted TWICE (a missing Payload to Device alias, and a swapped stationary/reverse decode). Before you touch any mapping, decoding or scoring code, open the Kotlin counterpart and diff the behaviour, not just the shape.\n\nTHE INTEGER-DIVISION TRAP, live in the committed fixtures. Kotlin computes half points as `(pointsCost + 1) / 2`, which is INTEGER division. The natural TypeScript transliteration `(cost + 1) / 2` is floating point and is silently wrong for every odd cost. The correct mirror is `Math.ceil(cost / 2)`. Assume every arithmetic port from Kotlin has this bug until proven otherwise.\n\nWIRE TIMESTAMPS ARE EPOCH-MILLIS NUMBERS at the boundary. Never a string, never a Date object. Parse to a number, and only convert to Date inside presentation code.\n\nSHARED CONTRACT FIXTURES LIVE OUTSIDE web/ (contracts/game-session/) and are read by BOTH clients. Read them in place by relative path. Never copy them into web/: a copy is exactly how the two clients stop testing the same thing.\n\nDO NOT DELETE APPARENTLY UNUSED EXPORTS in src/ without checking the design-sync surface first: .ds-sync-entry.tsx, .design-sync/config.json (componentSrcMap, dtsPropsFor) and .design-sync/previews/. Several components have zero in-app consumers because they are published to the design tool, and deleting one breaks the next design sync. This has already happened once.\n\nUSER-FACING COPY NEVER USES EM DASHES. Use a period, comma, colon or parentheses. This is a standing rule from the repo owner and applies to every string a user can read.",
+  "reviewDimensions": [
+    {
+      "key": "correctness",
+      "ask": "Logic bugs, edge cases, null/undefined/empty handling, async races, state that fails to reset between operations, and error paths that swallow failures silently."
+    },
+    {
+      "key": "cross-client-parity",
+      "ask": "Does anything here re-implement logic that already exists in the Kotlin client (mapping, decoding, scoring, id derivation, schema constants)? For each, name the Kotlin counterpart by file and confirm the behaviour matches, especially integer vs floating division, enum vocabularies restated by hand, and duplicated schema-version constants. A hand-restated enum list will NOT fail when the Kotlin side gains a value."
+    },
+    {
+      "key": "web-conventions",
+      "ask": "Vite/React idioms, module boundaries, no needless dependencies, no deletion of design-sync-published exports, wire timestamps kept as epoch-millis numbers, and shared fixtures read in place rather than copied."
+    }
+  ],
+  "procedures": {
+    "workdir": "Run everything from the web directory, not the repo root. In a monorepo with a native app the resolver's native rule wins at the root and would hand you the wrong profile and the wrong gates.",
+    "parity": "The parity script is the closest thing this stack has to an integration test. If a change touches data mapping or scoring, run it even when the factory has already reported the gate green, and read its output rather than only its exit code.",
+    "designSync": "After any change under src/components or src/screens, sanity-check the design-sync entry still compiles: it imports components that may have no other consumer."
+  }
+}
